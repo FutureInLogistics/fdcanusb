@@ -32,6 +32,7 @@
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/syslog.h>
 #include <sys/types.h>
 #include <syslog.h>
 #include <unistd.h>
@@ -39,6 +40,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -73,7 +75,7 @@ void ErrorIf(bool value, const char* format, ...) {
     ::fprintf(stderr, "\n");
 
     ::perror("");
-    std::exit(EXIT_FAILURE);
+    // std::exit(EXIT_FAILURE);
   } else {
     // Just consume this.
     char buf[1] = {};
@@ -238,11 +240,13 @@ int main(int argc, char** argv) {
     tty.c_oflag &= ~OPOST;
     tty.c_oflag &= ~ONLCR;
 
+    tty.c_ispeed = __MAX_BAUD;
+    tty.c_ospeed = __MAX_BAUD;
+
     ErrorIf(::tcsetattr(fd, TCSANOW, &tty) != 0, "error setting termios");
   }
 
   SetNonblock(fd);
-
 
   // Now open the CAN interface.
   int socket = ::socket(PF_CAN, SOCK_RAW, CAN_RAW);
@@ -276,21 +280,24 @@ int main(int argc, char** argv) {
   fd_set rfds = {};
   struct canfd_frame recv_frame = {};
   std::ostringstream fdcanusb_buf;
+  std::ostringstream cmd;
+  struct canfd_frame send_frame = {};
+
   while (true) {
-    // Look for things to read from either interface, bridge them as
-    // necessary.
+    // Look for things to read from either interface, bridge them as necessary.
     FD_ZERO(&rfds);
     FD_SET(socket, &rfds);
     FD_SET(fd, &rfds);
-    const int ret = ::select(
-        std::max(fd, socket) + 1, &rfds, nullptr, nullptr, nullptr);
+    const int ret = ::select(std::max(fd, socket) + 1, &rfds, nullptr, nullptr, nullptr);
     ErrorIf(ret < 0, "error in select");
 
     if (FD_ISSET(socket, &rfds)) {
       // Read a CAN message, forward to fdcanusb.
-      ErrorIf(::read(socket, &recv_frame, sizeof(recv_frame)) < 0,
-              "error reading CAN frame");
-      std::ostringstream cmd;
+      ssize_t nbytes = ::read(socket, &recv_frame, sizeof(recv_frame));
+      ErrorIf(nbytes < 0, "error reading CAN frame from socket");
+
+      cmd.str("");        
+      cmd.clear();
       Append(&cmd, "can send %X ", recv_frame.can_id & 0x1fffffff);
       for (int i = 0; i < recv_frame.len; i++) {
         Append(&cmd, "%02X", static_cast<int>(recv_frame.data[i]));
@@ -302,9 +309,9 @@ int main(int argc, char** argv) {
         std::cout << "Writing: " << cmd.str();
       }
 
-      ErrorIf(::write(fd, cmd.str().c_str(), cmd.str().size()) < 0,
-              "error writing to fdcanusb");
-    } else if (FD_ISSET(fd, &rfds)) {
+      ErrorIf(::write(fd, cmd.str().c_str(), cmd.str().size()) < 0, "error writing to fdcanusb");
+    } 
+    else if (FD_ISSET(fd, &rfds)) { 
       // Read something from fdcanusb, if we have a frame, forward to CAN.
       char buf[1024] = {};
       int count = 0;
@@ -313,8 +320,7 @@ int main(int argc, char** argv) {
       fdcanusb_buf.write(buf, count);
 
       size_t line_end = 0;
-      while ((line_end = fdcanusb_buf.str().find_first_of("\r\n"))
-             != std::string::npos) {
+      while ((line_end = fdcanusb_buf.str().find_first_of("\r\n")) != std::string::npos) {
         std::string all_buf = fdcanusb_buf.str();
         std::string this_msg = all_buf.substr(0, line_end);
         fdcanusb_buf.str(all_buf.substr(line_end + 1));
@@ -333,13 +339,31 @@ int main(int argc, char** argv) {
         } else if (StartsWith(this_msg, "rcv ")) {
           // A frame we can use.
           Tokenizer tokenizer(this_msg, " ");
-          const auto rcv = tokenizer.next();
+          tokenizer.next(); // Skip the "rcv" token
           const auto address = tokenizer.next();
           const auto data = tokenizer.next();
+
           if (address.empty() || data.empty()) { continue; }
 
-          struct canfd_frame send_frame = {};
-          send_frame.can_id = std::stoul(address, nullptr, 16);
+          send_frame = {};
+
+          // Parse remaining tokens as flags
+          std::string token;
+          while (!(token = tokenizer.next()).empty()) {
+            if (token[0] == 'E' || token[0] == 'F') {
+              // Extended frame format
+              send_frame.can_id |= CAN_EFF_FLAG;
+            } 
+            else if (token[0] == 'B') {
+              // Bitrate Switching
+              send_frame.flags |= CANFD_BRS;
+            } 
+            else if (token[0] == 'R') {
+              send_frame.can_id |= CAN_RTR_FLAG;
+            } 
+          }
+
+          send_frame.can_id |= std::stoul(address, nullptr, 16);
           send_frame.len = ParseCanData(data, send_frame.data);
 
           ErrorIf(::write(socket, &send_frame, sizeof(send_frame)) < 0,
