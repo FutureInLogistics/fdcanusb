@@ -163,10 +163,14 @@ const struct usb_string_descriptor manuf_desc_en{
       .bDescriptorType = USB_DTYPE_STRING,
       .wString = {0x6d, 0x6a, 0x62, 0x6f, 0x74, 0x73, 0x00},
 };
+
+// ATTRS{product}=="fdcanusb" or ATTRS{product}=="fdcanusb_sensor". Comment out the name you don't want.
 const struct usb_string_descriptor prod_desc_en{
-  .bLength = 18,
-      .bDescriptorType = USB_DTYPE_STRING,
-      .wString = {0x66, 0x64, 0x63, 0x61, 0x6e, 0x75, 0x73, 0x62, 0x00},
+  .bLength = 18, //fdcanusb
+  // .bLength = 32, // fdcanusb_sensor
+  .bDescriptorType = USB_DTYPE_STRING,
+  .wString = {0x66, 0x64, 0x63, 0x61, 0x6e, 0x75, 0x73, 0x62, 0x00}, // fdcanusb
+  // .wString = {0x66, 0x64, 0x63, 0x61, 0x6e, 0x75, 0x73, 0x62, 0x5f, 0x73, 0x65, 0x6e, 0x73, 0x6f, 0x72, 0x00}, // fdcanusb_sensor
 };
 const struct usb_string_descriptor *const dtable[] = {
     &lang_desc,
