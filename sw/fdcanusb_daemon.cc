@@ -166,6 +166,10 @@ class Tokenizer {
 
 }
 
+bool IsSerialDeviceAvailable(const std::string& tty) {
+  return access(tty.c_str(), F_OK) == 0;
+}
+
 int main(int argc, char** argv) {
   std::string tty;
   std::string ifname;
@@ -212,6 +216,7 @@ int main(int argc, char** argv) {
 
   syslogger(LOG_INFO, "starting on device %s", tty.c_str());
 
+restart:
   int fd = ::open(tty.c_str(), O_RDWR | O_NONBLOCK | O_NOCTTY);
   ErrorIf(fd < 0, "failed to open device %s", tty.c_str());
 
@@ -284,6 +289,22 @@ int main(int argc, char** argv) {
   struct canfd_frame send_frame = {};
 
   while (true) {
+
+    /* Handle disconnect or connection issues by jumping to restart instead of crashing. 
+       Not elegant but works for now */
+    if (!IsSerialDeviceAvailable(tty)) {
+      syslogger(LOG_INFO, "FDCANUSB disconnected.");
+       while (!IsSerialDeviceAvailable(tty)) {
+         syslogger(LOG_INFO, "Waiting for reconnect...");
+         usleep(100000);  // Retry every 100 ms.
+      }
+
+      syslogger(LOG_INFO, "FDCANUSB reconnected. Restarting deamon...");
+      ::close(fd);
+      ::close(socket);
+      goto restart;
+    }
+
     // Look for things to read from either interface, bridge them as necessary.
     FD_ZERO(&rfds);
     FD_SET(socket, &rfds);
@@ -311,7 +332,8 @@ int main(int argc, char** argv) {
 
       ErrorIf(::write(fd, cmd.str().c_str(), cmd.str().size()) < 0, "error writing to fdcanusb");
     } 
-    else if (FD_ISSET(fd, &rfds)) { 
+    
+    if (FD_ISSET(fd, &rfds)) { 
       // Read something from fdcanusb, if we have a frame, forward to CAN.
       char buf[1024] = {};
       int count = 0;
