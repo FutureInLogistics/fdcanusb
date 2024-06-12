@@ -33,13 +33,13 @@ constexpr std::size_t kFilterSize = 16;
 
 struct Config {
   int32_t bitrate = 1000000;
-  int32_t fd_bitrate = 5000000;
+  int32_t fd_bitrate = 1000000;
   bool automatic_retransmission = false;
   bool fdcan_frame = true;
-  bool bitrate_switch = true;
+  bool bitrate_switch = false;
   bool restricted_mode = false;
   bool bus_monitor = false;
-  bool termination = true;
+  bool termination = false;
   bool autostart = true;
   bool autorecover = false;
 
