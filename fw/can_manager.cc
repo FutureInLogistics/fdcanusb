@@ -34,12 +34,12 @@ constexpr std::size_t kFilterSize = 16;
 struct Config {
   int32_t bitrate = 1000000;
   int32_t fd_bitrate = 5000000;
-  bool automatic_retransmission = false;
+  bool automatic_retransmission = true;
   bool fdcan_frame = true;
   bool bitrate_switch = true;
   bool restricted_mode = false;
   bool bus_monitor = false;
-  bool termination = true;
+  bool termination = false;
   bool autostart = true;
   bool autorecover = false;
 
@@ -110,8 +110,19 @@ struct Config {
     }
   };
 
-  RateConfig rate;
-  RateConfig fdrate;
+  RateConfig rate = {
+    .prescaler = 1,
+    .sync_jump_width = 63,
+    .time_seg1 = 63,
+    .time_seg2 = 16,
+  };
+
+  RateConfig fdrate = {
+    .prescaler = 1,
+    .sync_jump_width = 4,
+    .time_seg1 = 11,
+    .time_seg2 = 4,
+  };
 
   template <typename Archive>
   void Serialize(Archive* a) {
