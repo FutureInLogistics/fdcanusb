@@ -133,7 +133,7 @@ class ClockManager {
 
  private:
   struct Config {
-    int32_t can_hz = 85000000;
+    int32_t can_hz = 80000000;
     int32_t hsitrim = 64;
 
     template <typename Archive>
