@@ -112,16 +112,16 @@ struct Config {
 
   RateConfig rate = {
     .prescaler = 1,
-    .sync_jump_width = 63,
-    .time_seg1 = 63,
-    .time_seg2 = 16,
+    .sync_jump_width = 17,
+    .time_seg1 = 67,
+    .time_seg2 = 17,
   };
 
   RateConfig fdrate = {
     .prescaler = 1,
-    .sync_jump_width = 4,
-    .time_seg1 = 11,
-    .time_seg2 = 4,
+    .sync_jump_width = 6,
+    .time_seg1 = 10,
+    .time_seg2 = 6,
   };
 
   template <typename Archive>
