@@ -1,0 +1,41 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Cortex Debug JLink",
+            "device": "stm32g474ce",
+            "cwd": "${workspaceFolder}/bazel-fdcanusb",
+            "executable": "/home/filics/workspace/mjbots/fdcanusb/bazel-bin/fw/fdcanusb.elf",
+            "request": "launch",
+            "type": "cortex-debug",
+            "runToEntryPoint": "main",
+            "servertype": "jlink",
+            "interface": "swd",
+            "gdbPath": "/home/filics/workspace/zephyr/local/SDK/zephyr-sdk-0.16.5/arm-zephyr-eabi/bin/arm-zephyr-eabi-gdb",
+            "armToolchainPath": "/home/filics/workspace/zephyr/local/SDK/zephyr-sdk-0.16.5/arm-zephyr-eabi/bin/",
+            "svdFile": "${workspaceFolder}/fw/STM32G474xx.svd",
+            // "showDevDebugOutput": "raw"
+        },
+        {
+            "name": "Cortex Debug STLink",
+            "device": "stm32g474ce",
+            "cwd": "${workspaceFolder}/bazel-fdcanusb",
+            "executable": "/home/filics/workspace/mjbots/fdcanusb/bazel-bin/fw/fdcanusb.elf",
+            "request": "launch",
+            "type": "cortex-debug",
+            "runToEntryPoint": "main",
+            "servertype": "openocd",
+            "interface": "swd",
+            "toolchainPrefix": "arm-zephyr-eabi",
+            "armToolchainPath": "/home/filics/workspace/zephyr/local/SDK/zephyr-sdk-0.16.5/arm-zephyr-eabi/bin",
+            "svdFile": "${workspaceFolder}/fw/STM32G474xx.svd",
+            "boardId": "0", 
+            "configFiles": [
+                "interface/stlink.cfg",
+                "target/stm32g4x.cfg"
+            ],
+            // "showDevDebugOutput": "raw",
+            // Work around for stopping at main on restart
+        }        
+    ]
+}
