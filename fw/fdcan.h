@@ -122,6 +122,10 @@ class FDCan {
 
   void RecoverBusOff();
 
+  static FDCan *instance_; // Static instance pointer
+
+  FDCAN_HandleTypeDef *GetHandle();
+
   FDCAN_ProtocolStatusTypeDef status();
 
   struct Config {
@@ -139,7 +143,7 @@ class FDCan {
   Config config_;
 
   FDCAN_GlobalTypeDef* can_ = nullptr;
-  FDCAN_HandleTypeDef hfdcan1_;
+  FDCAN_HandleTypeDef hfdcan2_;
   uint32_t last_tx_request_ = 0;
 };
 
