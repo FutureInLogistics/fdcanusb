@@ -15,11 +15,17 @@
 #include "fw/fdcan.h"
 
 #include "PeripheralPins.h"
+#include <atomic>
+
+#define USE_FDCAN_INTERRUPT 1
 
 extern const PinMap PinMap_CAN_TD[];
 extern const PinMap PinMap_CAN_RD[];
 
 namespace fw {
+/* TODO: not a nice solution. More of a quick hack */
+FDCan* FDCan::instance_ = nullptr;
+  
 namespace {
 constexpr uint32_t RoundUpDlc(size_t size) {
   if (size == 0) { return FDCAN_DLC_BYTES_0; }
@@ -88,11 +94,106 @@ FDCan::Rate ApplyRateOverride(FDCan::Rate base, FDCan::Rate overlay) {
   }
   return base;
 }
+
+#if USE_FDCAN_INTERRUPT == 1
+struct CANMessage
+{
+  FDCAN_RxHeaderTypeDef header;
+  uint8_t data[64]; // Maximum possible CAN FD payload
+};
+
+class CircularBuffer
+{
+public:
+  bool IsEmpty() const { return head_.load(std::memory_order_acquire) == tail_.load(std::memory_order_acquire); }
+  bool IsFull() const { return ((head_.load(std::memory_order_acquire) + 1) % kBufferSize) == tail_.load(std::memory_order_acquire); }
+
+  void Push(const CANMessage &msg)
+  {
+    auto current_head = head_.load(std::memory_order_relaxed);
+    auto next_head = (current_head + 1) % kBufferSize;
+
+    if (next_head == tail_.load(std::memory_order_acquire))
+    {
+      // Buffer is full, consider handling this case by overwriting or skipping
+      return;
+    }
+
+    buffer_[current_head] = msg;
+    head_.store(next_head, std::memory_order_release);
+  }
+
+  bool Pop(CANMessage *msg)
+  {
+    auto current_tail = tail_.load(std::memory_order_relaxed);
+
+    if (current_tail == head_.load(std::memory_order_acquire))
+    {
+      return false; // Buffer is empty
+    }
+
+    *msg = buffer_[current_tail];
+    tail_.store((current_tail + 1) % kBufferSize, std::memory_order_release);
+    return true;
+  }
+
+private:
+// Define a circular buffer for storing received CAN messages
+  static constexpr size_t kBufferSize = 100;
+  CANMessage buffer_[kBufferSize] = {};
+
+  std::atomic<size_t> head_{0};
+  std::atomic<size_t> tail_{0};
+};
+
+CircularBuffer can_message_buffer;
+
+void RxFifoEventCb(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs){
+  UNUSED(RxFifo0ITs);
+  FDCAN_RxHeaderTypeDef rx_header;
+  uint8_t rx_data[64];
+
+  while (HAL_FDCAN_GetRxFifoFillLevel(hfdcan, FDCAN_RX_FIFO0) > 0)
+  {
+    if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &rx_header, rx_data) == HAL_OK)
+    {
+      CANMessage msg = {rx_header, {0}};
+      std::copy(rx_data, rx_data + sizeof(rx_data), msg.data);
+      can_message_buffer.Push(msg);
+    }
+    else
+    {
+      break;
+    }
+  }
+}
+
+#if USE_HAL_FDCAN_REGISTER_CALLBACKS == 0
+extern "C" void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
+{
+  RxFifoEventCb(hfdcan, RxFifo0ITs);
+}
+#endif
+
+extern "C" void FDCAN2_IT0_IRQHandler(void)
+{
+  if (FDCan::instance_)
+  {
+    HAL_FDCAN_IRQHandler(FDCan::instance_->GetHandle());
+  }
+}
+#endif // USE_FDCAN_INTERRUPT
 }
 
 FDCan::FDCan(const Options& options)
     : options_(options) {
+  instance_ = this;
+
   __HAL_RCC_FDCAN_CLK_ENABLE();
+#if USE_FDCAN_INTERRUPT == 1
+  HAL_NVIC_SetPriority(FDCAN2_IT0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(FDCAN2_IT0_IRQn);
+#endif
 
   {
     const auto can_td = pinmap_peripheral(options.td, PinMap_CAN_TD);
@@ -104,7 +205,7 @@ FDCan::FDCan(const Options& options)
   pinmap_pinout(options.td, PinMap_CAN_TD);
   pinmap_pinout(options.rd, PinMap_CAN_RD);
 
-  auto& can = hfdcan1_;
+  auto& can = hfdcan2_;
 
   can.Instance = can_;
   can.Init.ClockDivider = FDCAN_CLOCK_DIV1;
@@ -274,14 +375,27 @@ FDCan::FDCan(const Options& options)
     }
   }
 
-  if (HAL_FDCAN_Start(&can) != HAL_OK) {
+#if USE_HAL_FDCAN_REGISTER_CALLBACKS == 1
+  if (HAL_FDCAN_RegisterRxFifo0Callback(&can, RxFifoEventCb) != HAL_OK)
+  {
+    mbed_die();
+  }
+#endif
+
+  if (HAL_FDCAN_Start(&can) != HAL_OK)
+  {
     mbed_die();
   }
 
   if (HAL_FDCAN_ActivateNotification(
-          &can, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) {
+          &can, FDCAN_IT_LIST_RX_FIFO0, 0) != HAL_OK)
+  {
     mbed_die();
   }
+}
+
+FDCAN_HandleTypeDef* FDCan::GetHandle() {
+    return &hfdcan2_;
 }
 
 namespace {
@@ -302,7 +416,7 @@ FDCan::SendResult FDCan::Send(uint32_t dest_id,
 
   // Abort anything we have started that hasn't finished.
   if (send_options.abort_existing && last_tx_request_) {
-    HAL_FDCAN_AbortTxRequest(&hfdcan1_, last_tx_request_);
+    HAL_FDCAN_AbortTxRequest(&hfdcan2_, last_tx_request_);
   }
 
   FDCAN_TxHeaderTypeDef tx_header;
@@ -328,25 +442,50 @@ FDCan::SendResult FDCan::Send(uint32_t dest_id,
   tx_header.MessageMarker = 0;
 
   if (HAL_FDCAN_AddMessageToTxFifoQ(
-          &hfdcan1_, &tx_header,
+          &hfdcan2_, &tx_header,
           const_cast<uint8_t*>(
               reinterpret_cast<const uint8_t*>(data.data()))) != HAL_OK) {
     return kNoSpace;
   }
-  last_tx_request_ = HAL_FDCAN_GetLatestTxFifoQRequestBuffer(&hfdcan1_);
+  last_tx_request_ = HAL_FDCAN_GetLatestTxFifoQRequestBuffer(&hfdcan2_);
 
   return kSuccess;
 }
 
-bool FDCan::Poll(FDCAN_RxHeaderTypeDef* header,
-                 mjlib::base::string_span data) {
+bool FDCan::Poll(FDCAN_RxHeaderTypeDef *header, mjlib::base::string_span data)
+{
+#if USE_FDCAN_INTERRUPT == 1
+  CANMessage msg;
+  if (can_message_buffer.Pop(&msg))
+  {
+    *header = msg.header;
+
+    auto copy_size = std::min(data.size(), static_cast<mjlib::base::string_span::index_type>(sizeof(msg.data)));
+
+    // Safety check to ensure the destination buffer is large enough
+    if (data.size() < copy_size)
+    {
+      return false;
+    }
+
+    std::memcpy(data.data(), msg.data, copy_size);
+    return true;
+  }
+  else
+  {
+    // No message in the buffer
+    return false;
+  }
+#else
   if (HAL_FDCAN_GetRxMessage(
-          &hfdcan1_, FDCAN_RX_FIFO0, header,
-          reinterpret_cast<uint8_t*>(data.data())) != HAL_OK) {
+          &hfdcan2_, FDCAN_RX_FIFO0, header,
+          reinterpret_cast<uint8_t *>(data.data())) != HAL_OK)
+  {
     return false;
   }
 
   return true;
+#endif
 }
 
 void FDCan::RecoverBusOff() {
@@ -355,7 +494,7 @@ void FDCan::RecoverBusOff() {
 
 FDCAN_ProtocolStatusTypeDef FDCan::status() {
   FDCAN_ProtocolStatusTypeDef result = {};
-  HAL_FDCAN_GetProtocolStatus(&hfdcan1_, &result);
+  HAL_FDCAN_GetProtocolStatus(&hfdcan2_, &result);
   return result;
 }
 
