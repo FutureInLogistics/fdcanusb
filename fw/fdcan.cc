@@ -489,7 +489,7 @@ bool FDCan::Poll(FDCAN_RxHeaderTypeDef *header, mjlib::base::string_span data)
 }
 
 void FDCan::RecoverBusOff() {
-  hfdcan1_.Instance->CCCR &= ~FDCAN_CCCR_INIT;
+  hfdcan2_.Instance->CCCR &= ~FDCAN_CCCR_INIT;
 }
 
 FDCAN_ProtocolStatusTypeDef FDCan::status() {

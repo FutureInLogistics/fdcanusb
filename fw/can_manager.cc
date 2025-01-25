@@ -174,7 +174,7 @@ class CanManager::Impl {
   }
 
   void UpdateConfig() {
-    can_term_.write(config_.termination ? 0 : 1);
+    can_term_.write(config_.termination ? 1 : 0);
   }
 
   void Command(const std::string_view& command,
@@ -490,9 +490,9 @@ class CanManager::Impl {
   std::optional<FDCan> can_;
   std::array<FDCan::Filter, kFilterSize> fdcan_filter_ = { {} };
 
-  DigitalOut can_stb_{PB_11, 0};
+  DigitalOut can_stb_{PB_14, 0};
   DigitalOut can_shdn_{PB_15, 0};
-  DigitalOut can_term_{PB_14, 0};
+  DigitalOut can_term_{PB_11, 0};
 
   DigitalOut led_rx_{PB_4, 0};
   DigitalOut led_tx_{PB_3, 0};
